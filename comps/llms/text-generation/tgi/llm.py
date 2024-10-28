@@ -23,16 +23,35 @@ from comps import (
     statistics_dict,
 )
 from comps.cores.proto.api_protocol import ChatCompletionRequest
+import requests
 
 logger = CustomLogger("llm_tgi")
 logflag = os.getenv("LOGFLAG", False)
 
-llm_endpoint = os.getenv("TGI_LLM_ENDPOINT", "http://localhost:8080")
-llm = AsyncInferenceClient(
-    model=llm_endpoint,
-    timeout=600,
-)
+# Environment variables
+TOKEN_URL = os.getenv("TOKEN_URL")
+CLIENTID = os.getenv("CLIENTID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 
+# Constants
+GRANT_TYPE = "client_credentials"
+
+def get_access_token() -> str:
+    data = {
+        'client_id': CLIENTID,
+        'client_secret': CLIENT_SECRET,
+        'grant_type': GRANT_TYPE,
+    }
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    response = requests.post(TOKEN_URL, data=data, headers=headers)
+    if response.status_code == 200:
+        token_info = response.json()
+        return token_info.get('access_token', '')
+    else:
+        logger.error(f"Failed to retrieve access token: {response.status_code}, {response.text}")
+        return ''
 
 @register_microservice(
     name="opea_service@llm_tgi",
@@ -45,6 +64,14 @@ llm = AsyncInferenceClient(
 async def llm_generate(input: Union[LLMParamsDoc, ChatCompletionRequest, SearchedDoc]):
     if logflag:
         logger.info(input)
+        
+    access_token = get_access_token() if TOKEN_URL and CLIENTID and CLIENT_SECRET else None
+    headers = {}
+    if access_token:
+        headers = {"Authorization": f"Bearer {access_token}"}
+    llm_endpoint = os.getenv("TGI_LLM_ENDPOINT", "http://localhost:8080")
+    llm = AsyncInferenceClient(model=llm_endpoint,timeout=600, headers=headers)
+
     prompt_template = None
     if not isinstance(input, SearchedDoc) and input.chat_template:
         prompt_template = PromptTemplate.from_template(input.chat_template)

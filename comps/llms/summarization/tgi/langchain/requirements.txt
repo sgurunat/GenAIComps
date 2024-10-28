@@ -13,3 +13,4 @@ prometheus-fastapi-instrumentator
 shortuuid
 transformers
 uvicorn
+requests
