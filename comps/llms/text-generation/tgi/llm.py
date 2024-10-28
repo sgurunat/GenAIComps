@@ -23,6 +23,8 @@ from comps import (
     statistics_dict,
 )
 from comps.cores.proto.api_protocol import ChatCompletionRequest
+import json
+from typing import Optional
 
 logger = CustomLogger("llm_tgi")
 logflag = os.getenv("LOGFLAG", False)
