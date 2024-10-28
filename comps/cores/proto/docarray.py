@@ -203,7 +203,6 @@ class LLMParamsDoc(BaseDoc):
 
 
 class LLMParams(BaseDoc):
-    model: Optional[str] = None
     max_tokens: int = 1024
     max_new_tokens: int = 1024
     top_k: int = 10

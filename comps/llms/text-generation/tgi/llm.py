@@ -23,28 +23,35 @@ from comps import (
     statistics_dict,
 )
 from comps.cores.proto.api_protocol import ChatCompletionRequest
+import requests
 
 logger = CustomLogger("llm_tgi")
 logflag = os.getenv("LOGFLAG", False)
 
 # Environment variables
-MODEL_CONFIGS = os.getenv("MODEL_CONFIGS", "{}")
-DEFAULT_ENDPOINT = os.getenv("TGI_LLM_ENDPOINT", "http://localhost:8080")
+TOKEN_URL = os.getenv("TOKEN_URL")
+CLIENTID = os.getenv("CLIENTID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 
-def get_model_endpoint(model_name: Optional[str], default_endpoint: str, model_configs: str) -> str:
-    # If model name is not provided, return the default endpoint
-    if not model_name:
-        return default_endpoint
-    try:
-        # Parse the model configurations from the JSON string
-        configs = json.loads(model_configs)
-        for config in configs:
-            if config.get("model_name") == model_name:
-                return config.get("endpoint", default_endpoint)
-    except json.JSONDecodeError:
-        logger.error("Error parsing MODEL_CONFIGS environment variable as JSON.")
-    # If no specific configuration is found, return the default endpoint
-    return default_endpoint
+# Constants
+GRANT_TYPE = "client_credentials"
+
+def get_access_token() -> str:
+    data = {
+        'client_id': CLIENTID,
+        'client_secret': CLIENT_SECRET,
+        'grant_type': GRANT_TYPE,
+    }
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    response = requests.post(TOKEN_URL, data=data, headers=headers)
+    if response.status_code == 200:
+        token_info = response.json()
+        return token_info.get('access_token', '')
+    else:
+        logger.error(f"Failed to retrieve access token: {response.status_code}, {response.text}")
+        return ''
 
 @register_microservice(
     name="opea_service@llm_tgi",
@@ -57,9 +64,14 @@ def get_model_endpoint(model_name: Optional[str], default_endpoint: str, model_c
 async def llm_generate(input: Union[LLMParamsDoc, ChatCompletionRequest, SearchedDoc]):
     if logflag:
         logger.info(input)
-    model = input.model if input.model else None
-    llm_endpoint = get_model_endpoint(model, DEFAULT_ENDPOINT, MODEL_CONFIGS)
-    llm = AsyncInferenceClient(model=llm_endpoint,timeout=600)
+        
+    access_token = get_access_token() if TOKEN_URL and CLIENTID and CLIENT_SECRET else None
+    headers = {}
+    if access_token:
+        headers = {"Authorization": f"Bearer {access_token}"}
+    llm_endpoint = os.getenv("TGI_LLM_ENDPOINT", "http://localhost:8080")
+    llm = AsyncInferenceClient(model=llm_endpoint,timeout=600, headers=headers)
+
     prompt_template = None
     if not isinstance(input, SearchedDoc) and input.chat_template:
         prompt_template = PromptTemplate.from_template(input.chat_template)
@@ -76,7 +88,7 @@ async def llm_generate(input: Union[LLMParamsDoc, ChatCompletionRequest, Searche
             docs = [doc.text for doc in input.retrieved_docs]
             if logflag:
                 logger.info(f"[ SearchedDoc ] combined retrieved docs: {docs}")
-            prompt = ChatTemplate.generate_rag_prompt(input.initial_query, docs, input.model)
+            prompt = ChatTemplate.generate_rag_prompt(input.initial_query, docs)
         # use default llm parameters for inferencing
         new_input = LLMParamsDoc(query=prompt)
         if logflag:
@@ -129,7 +141,7 @@ async def llm_generate(input: Union[LLMParamsDoc, ChatCompletionRequest, Searche
         else:
             if input.documents:
                 # use rag default template
-                prompt = ChatTemplate.generate_rag_prompt(input.query, input.documents, input.model)
+                prompt = ChatTemplate.generate_rag_prompt(input.query, input.documents)
 
         text_generation = await llm.text_generation(
             prompt=prompt,
@@ -185,7 +197,7 @@ async def llm_generate(input: Union[LLMParamsDoc, ChatCompletionRequest, Searche
             else:
                 if input.documents:
                     # use rag default template
-                    prompt = ChatTemplate.generate_rag_prompt(input.messages, input.documents, input.model)
+                    prompt = ChatTemplate.generate_rag_prompt(input.messages, input.documents)
 
             chat_completion = client.completions.create(
                 model="tgi",

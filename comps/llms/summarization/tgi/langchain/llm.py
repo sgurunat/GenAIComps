@@ -8,15 +8,35 @@ from huggingface_hub import AsyncInferenceClient
 from langchain.prompts import PromptTemplate
 
 from comps import CustomLogger, GeneratedDoc, LLMParamsDoc, ServiceType, opea_microservices, register_microservice
+import requests
 
 logger = CustomLogger("llm_docsum")
 logflag = os.getenv("LOGFLAG", False)
 
-llm_endpoint = os.getenv("TGI_LLM_ENDPOINT", "http://localhost:8080")
-llm = AsyncInferenceClient(
-    model=llm_endpoint,
-    timeout=600,
-)
+# Environment variables
+TOKEN_URL = os.getenv("TOKEN_URL")
+CLIENTID = os.getenv("CLIENTID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+
+# Constants
+GRANT_TYPE = "client_credentials"
+
+def get_access_token() -> str:
+    data = {
+        'client_id': CLIENTID,
+        'client_secret': CLIENT_SECRET,
+        'grant_type': GRANT_TYPE,
+    }
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    response = requests.post(TOKEN_URL, data=data, headers=headers)
+    if response.status_code == 200:
+        token_info = response.json()
+        return token_info.get('access_token', '')
+    else:
+        logger.error(f"Failed to retrieve access token: {response.status_code}, {response.text}")
+        return ''
 
 templ_en = """Write a concise summary of the following:
 
@@ -45,7 +65,6 @@ templ_zh = """请简要概括以下内容:
 async def llm_generate(input: LLMParamsDoc):
     if logflag:
         logger.info(input)
-
     if input.language in ["en", "auto"]:
         templ = templ_en
     elif input.language in ["zh"]:
@@ -59,6 +78,17 @@ async def llm_generate(input: LLMParamsDoc):
     if logflag:
         logger.info("After prompting:")
         logger.info(prompt)
+    
+    access_token = get_access_token() if TOKEN_URL and CLIENTID and CLIENT_SECRET else None
+    headers = {}
+    if access_token:
+        headers = {"Authorization": f"Bearer {access_token}"}
+    llm_endpoint = os.getenv("TGI_LLM_ENDPOINT", "http://localhost:8080")
+    llm = AsyncInferenceClient(
+        model=llm_endpoint,
+        timeout=600,
+        headers=headers
+    )
 
     text_generation = await llm.text_generation(
         prompt=prompt,
